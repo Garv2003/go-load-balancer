@@ -2,6 +2,7 @@ package models
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 )
 
@@ -18,4 +19,16 @@ func (serverPool *ServerPool) AddServer(serverUrl string) {
 	}
 
 	serverPool.Servers = append(serverPool.Servers, &Server{ServerUrl: *parseUrl})
+}
+
+func (serverPool *ServerPool) HealthCheck() {
+	for _, b := range serverPool.Servers {
+		status := "up"
+		alive := b.IsServerAlive()
+		b.SetIsAlive(alive)
+		if !alive {
+			status = "down"
+		}
+		log.Printf("%s [%s]\n", b.ServerUrl, status)
+	}
 }

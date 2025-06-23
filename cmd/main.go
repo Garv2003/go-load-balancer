@@ -1,12 +1,14 @@
-package cmd
+package main
 
 import (
 	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/algo"
 	"github.com/garv2003/go-load-balancer/internals/models"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 )
 
 type ServerManager interface {
@@ -19,7 +21,7 @@ type UpdateServerStats interface {
 }
 
 type UpdateAvgTime interface {
-	UpdateServerAvgTime(serverUrl url.URL)
+	UpdateServerAvgTime(serverUrl url.URL, t time.Duration)
 }
 
 var serverPool models.ServerPool
@@ -47,6 +49,18 @@ func GetServerManger(strategies string) ServerManager {
 	}
 }
 
+func healthCheck() {
+	t := time.NewTicker(time.Second * 20)
+	for {
+		select {
+		case <-t.C:
+			log.Println("Starting health check...")
+			serverPool.HealthCheck()
+			log.Println("Health check completed")
+		}
+	}
+}
+
 func main() {
 	serverPool.AddServer("http://localhost:7891")
 	serverPool.AddServer("http://localhost:7892")
@@ -56,12 +70,28 @@ func main() {
 	mux := http.NewServeMux()
 	serverManager := GetServerManger("roundRobin")
 
+	go healthCheck()
+
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+		now := time.Now()
 		serverUrl, err := serverManager.GetServer(serverPool.Servers)
 
 		if err != nil {
 			fmt.Println(err)
 			return
+		}
+
+		update, ok := serverManager.(UpdateServerStats)
+
+		if !ok {
+			update.IncrementConnection(serverUrl)
+			defer update.DecrementConnection(serverUrl)
+		}
+
+		updateTime, err1 := serverManager.(UpdateAvgTime)
+
+		if !err1 {
+			updateTime.UpdateServerAvgTime(serverUrl, time.Since(now))
 		}
 
 		proxyHttp := httputil.NewSingleHostReverseProxy(&serverUrl)
