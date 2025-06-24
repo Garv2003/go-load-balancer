@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sync"
 )
 
 type ServerPool struct {
 	Servers []*Server
+	mu      sync.Mutex
 }
 
-func (serverPool *ServerPool) AddServer(serverUrl string) {
+func (sp *ServerPool) AddServer(serverUrl string) {
 	parseUrl, err := url.Parse(serverUrl)
 
 	if err != nil {
@@ -18,17 +20,23 @@ func (serverPool *ServerPool) AddServer(serverUrl string) {
 		return
 	}
 
-	serverPool.Servers = append(serverPool.Servers, &Server{ServerUrl: *parseUrl})
+	sp.Servers = append(sp.Servers, &Server{ServerUrl: *parseUrl})
 }
 
-func (serverPool *ServerPool) HealthCheck() {
-	for _, b := range serverPool.Servers {
+func (sp *ServerPool) HealthCheck() {
+	for _, b := range sp.Servers {
 		status := "up"
 		alive := b.IsServerAlive()
 		b.SetIsAlive(alive)
 		if !alive {
 			status = "down"
 		}
-		log.Printf("%s [%s]\n", b.ServerUrl, status)
+		log.Printf("%v [%s]\n", b.ServerUrl, status)
 	}
+}
+
+func (sp *ServerPool) ClearServers() {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	sp.Servers = []*Server{}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/algo"
+	"github.com/garv2003/go-load-balancer/internals/config"
 	"github.com/garv2003/go-load-balancer/internals/models"
 	"log"
 	"net"
@@ -50,8 +51,8 @@ func GetServerManger(strategies string) ServerManager {
 	}
 }
 
-func healthCheck() {
-	t := time.NewTicker(time.Second * 20)
+func healthCheck(healthInterval int) {
+	t := time.NewTicker(time.Second * time.Duration(healthInterval))
 	for {
 		select {
 		case <-t.C:
@@ -63,15 +64,26 @@ func healthCheck() {
 }
 
 func main() {
-	serverPool.AddServer("http://localhost:7891")
-	serverPool.AddServer("http://localhost:7892")
-	serverPool.AddServer("http://localhost:7893")
-	serverPool.AddServer("http://localhost:7894")
+	configPath := "config.yaml"
+	cfg := &config.Config{}
+	if err := cfg.ReloadFromFile(configPath); err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	for _, server := range cfg.SafeGet().Servers {
+		serverPool.AddServer(server)
+	}
+
+	go config.WatchConfig(configPath, cfg, &serverPool)
+
+	for _, v := range cfg.Servers {
+		serverPool.AddServer(v)
+	}
 
 	mux := http.NewServeMux()
-	serverManager := GetServerManger("roundRobin")
+	serverManager := GetServerManger(cfg.Strategy)
 
-	go healthCheck()
+	go healthCheck(cfg.HealthCheckInterval)
 
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		now := time.Now()
@@ -106,7 +118,7 @@ func main() {
 		proxyHttp.ServeHTTP(writer, request)
 	})
 
-	err := http.ListenAndServe(":8080", mux)
+	err := http.ListenAndServe(":"+cfg.Port, mux)
 
 	if err != nil {
 		return

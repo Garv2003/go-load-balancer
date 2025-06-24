@@ -1,0 +1,8 @@
+port: "8080"
+strategy: "leastConnection"
+healthCheckInterval: 15
+servers:
+  - "http://localhost:7891"
+  - "http://localhost:7892"
+  - "http://localhost:7893"
+  - "http://localhost:7894"
