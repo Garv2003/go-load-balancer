@@ -1,33 +1,52 @@
 package algo
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/models"
 	"net/url"
-	"sync/atomic"
+	"sync"
 )
 
 type WeightedRoundRobin struct {
-	count atomic.Int64
+	currentIndex       int
+	currentWeightCount float64
+	mu                 sync.Mutex
 }
 
-func (rr *WeightedRoundRobin) GetCount() int {
-	return int(rr.count.Load())
-}
+func (rr *WeightedRoundRobin) GetServer(_ context.Context, servers []*models.Server) (url.URL, error) {
+	rr.mu.Lock()
+	defer rr.mu.Unlock()
 
-func (rr *WeightedRoundRobin) IncrementCount() {
-	rr.count.Add(1)
-}
-
-func (rr *WeightedRoundRobin) GetServer(servers []*models.Server) (url.URL, error) {
 	if len(servers) == 0 {
-		fmt.Println("there is no server in servers list")
-		return url.URL{}, errors.New("there is no server in servers list")
+		return url.URL{}, errors.New("no servers in server list")
 	}
 
-	server := servers[rr.GetCount()%len(servers)]
-	rr.IncrementCount()
+	var aliveServers []*models.Server
+	for _, s := range servers {
+		if s.IsAlive && s.Weight > 0 {
+			aliveServers = append(aliveServers, s)
+		}
+	}
 
-	return server.ServerUrl, nil
+	if len(aliveServers) == 0 {
+		return url.URL{}, errors.New("no alive servers available")
+	}
+
+	if rr.currentIndex >= len(aliveServers) {
+		rr.currentIndex = 0
+		rr.currentWeightCount = 0
+	}
+
+	selected := aliveServers[rr.currentIndex]
+
+	if rr.currentWeightCount < selected.Weight {
+		rr.currentWeightCount++
+		return selected.ServerUrl, nil
+	} else {
+		rr.currentIndex = (rr.currentIndex + 1) % len(aliveServers)
+		rr.currentWeightCount = 1
+		selected = aliveServers[rr.currentIndex]
+		return selected.ServerUrl, nil
+	}
 }

@@ -1,33 +1,49 @@
 package algo
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/models"
 	"net/url"
-	"sync/atomic"
 )
 
-type WeightedLeastConnection struct {
-	count atomic.Int64
-}
+type WeightedLeastConnection struct{}
 
-func (rr *WeightedLeastConnection) GetCount() int {
-	return int(rr.count.Load())
-}
-
-func (rr *WeightedLeastConnection) IncrementCount() {
-	rr.count.Add(1)
-}
-
-func (rr *WeightedLeastConnection) GetServer(servers []*models.Server) (url.URL, error) {
+func (wlc *WeightedLeastConnection) GetServer(_ context.Context, servers []*models.Server) (url.URL, error) {
 	if len(servers) == 0 {
-		fmt.Println("there is no server in servers list")
-		return url.URL{}, errors.New("there is no server in servers list")
+		return url.URL{}, errors.New("no servers available")
 	}
 
-	server := servers[rr.GetCount()%len(servers)]
-	rr.IncrementCount()
+	var selected *models.Server
+	minRatio := float64(-1)
 
-	return server.ServerUrl, nil
+	for _, server := range servers {
+		if !server.IsAlive || server.Weight <= 0 {
+			continue
+		}
+
+		connCount := server.Connection
+		ratio := float64(connCount) / float64(server.Weight)
+
+		if selected == nil || ratio < minRatio {
+			selected = server
+			minRatio = ratio
+		}
+	}
+
+	if selected == nil {
+		return url.URL{}, errors.New("no alive servers with valid weight")
+	}
+
+	selected.IncrementConnection()
+
+	return selected.ServerUrl, nil
+}
+
+func (wlc *WeightedLeastConnection) DecrementConnection(servers []*models.Server, server url.URL) {
+	for _, v := range servers {
+		if v.ServerUrl == server {
+			v.DecrementConnection()
+		}
+	}
 }

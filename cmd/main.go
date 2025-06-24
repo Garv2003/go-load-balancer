@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/algo"
 	"github.com/garv2003/go-load-balancer/internals/models"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -12,16 +14,15 @@ import (
 )
 
 type ServerManager interface {
-	GetServer(servers []*models.Server) (url.URL, error)
+	GetServer(ctx context.Context, servers []*models.Server) (url.URL, error)
 }
 
 type UpdateServerStats interface {
-	IncrementConnection(serverUrl url.URL)
-	DecrementConnection(serverUrl url.URL)
+	DecrementConnection(servers []*models.Server, server url.URL)
 }
 
 type UpdateAvgTime interface {
-	UpdateServerAvgTime(serverUrl url.URL, t time.Duration)
+	UpdateServerAvgTime(servers []*models.Server, serverUrl url.URL, t time.Duration)
 }
 
 var serverPool models.ServerPool
@@ -38,12 +39,12 @@ func GetServerManger(strategies string) ServerManager {
 		return &algo.WeightedLeastConnection{}
 	case "leastResponseTime":
 		return &algo.LeastResponseTime{}
-	case "weightedResponseTime:":
+	case "weightedResponseTime":
 		return &algo.WeightedResponseTime{}
 	case "IpHash":
 		return &algo.IpHash{}
 	case "random":
-		return &algo.Random{}
+		return algo.NewRandom()
 	default:
 		return nil
 	}
@@ -74,7 +75,15 @@ func main() {
 
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		now := time.Now()
-		serverUrl, err := serverManager.GetServer(serverPool.Servers)
+
+		clientIP := request.RemoteAddr
+		if host, _, err := net.SplitHostPort(clientIP); err == nil {
+			clientIP = host
+		}
+
+		ctx := context.WithValue(request.Context(), "client-ip", clientIP)
+
+		serverUrl, err := serverManager.GetServer(ctx, serverPool.Servers)
 
 		if err != nil {
 			fmt.Println(err)
@@ -84,14 +93,13 @@ func main() {
 		update, ok := serverManager.(UpdateServerStats)
 
 		if !ok {
-			update.IncrementConnection(serverUrl)
-			defer update.DecrementConnection(serverUrl)
+			defer update.DecrementConnection(serverPool.Servers, serverUrl)
 		}
 
 		updateTime, err1 := serverManager.(UpdateAvgTime)
 
 		if !err1 {
-			updateTime.UpdateServerAvgTime(serverUrl, time.Since(now))
+			updateTime.UpdateServerAvgTime(serverPool.Servers, serverUrl, time.Since(now))
 		}
 
 		proxyHttp := httputil.NewSingleHostReverseProxy(&serverUrl)

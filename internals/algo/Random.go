@@ -1,33 +1,45 @@
 package algo
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/models"
+	"math/rand"
 	"net/url"
-	"sync/atomic"
+	"sync"
+	"time"
 )
 
 type Random struct {
-	count atomic.Int64
+	rng  *rand.Rand
+	lock sync.Mutex
 }
 
-func (rr *Random) GetCount() int {
-	return int(rr.count.Load())
+func NewRandom() *Random {
+	return &Random{
+		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
 }
 
-func (rr *Random) IncrementCount() {
-	rr.count.Add(1)
-}
-
-func (rr *Random) GetServer(servers []*models.Server) (url.URL, error) {
+func (r *Random) GetServer(_ context.Context, servers []*models.Server) (url.URL, error) {
 	if len(servers) == 0 {
-		fmt.Println("there is no server in servers list")
-		return url.URL{}, errors.New("there is no server in servers list")
+		return url.URL{}, errors.New("no servers in list")
 	}
 
-	server := servers[rr.GetCount()%len(servers)]
-	rr.IncrementCount()
+	var aliveServers []*models.Server
+	for _, s := range servers {
+		if s.IsAlive {
+			aliveServers = append(aliveServers, s)
+		}
+	}
 
-	return server.ServerUrl, nil
+	if len(aliveServers) == 0 {
+		return url.URL{}, errors.New("no alive servers available")
+	}
+
+	r.lock.Lock()
+	index := r.rng.Intn(len(aliveServers))
+	r.lock.Unlock()
+
+	return aliveServers[index].ServerUrl, nil
 }

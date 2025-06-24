@@ -1,28 +1,33 @@
 package algo
 
 import (
-	"fmt"
+	"context"
+	"errors"
 	"github.com/garv2003/go-load-balancer/internals/models"
 	"net/url"
 )
 
-type LeastConnection struct {
-}
+type LeastConnection struct{}
 
-func (lc *LeastConnection) GetServer(servers []*models.Server) (url.URL, error) {
+func (lc *LeastConnection) GetServer(_ context.Context, servers []*models.Server) (url.URL, error) {
 	if len(servers) == 0 {
-		fmt.Println("there is no servers in server list!!!")
-		return url.URL{}, nil
+		return url.URL{}, errors.New("no servers in server list")
 	}
 
-	minServer := servers[0]
+	var minServer *models.Server
 
-	for _, v := range servers {
-		if minServer.Connection > v.Connection {
-			if v.IsAlive {
-				minServer = v
-			}
+	for _, server := range servers {
+		if !server.IsAlive {
+			continue
 		}
+
+		if minServer == nil || server.Connection < minServer.Connection {
+			minServer = server
+		}
+	}
+
+	if minServer == nil {
+		return url.URL{}, errors.New("no alive servers available")
 	}
 
 	return minServer.ServerUrl, nil

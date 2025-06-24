@@ -11,9 +11,10 @@ import (
 type Server struct {
 	ServerUrl  url.URL
 	Connection int64
-	AvgTime    int64
+	AvgTime    float64
 	IsAlive    bool
 	Mut        sync.Mutex
+	Weight     float64
 }
 
 func (s *Server) GetAlive() bool {
@@ -43,4 +44,16 @@ func (s *Server) IsServerAlive() bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+func (s *Server) IncrementConnection() {
+	s.Mut.Lock()
+	defer s.Mut.Unlock()
+	s.Connection++
+}
+
+func (s *Server) DecrementConnection() {
+	s.Mut.Lock()
+	defer s.Mut.Unlock()
+	s.Connection--
 }

@@ -1,8 +1,8 @@
 package algo
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/models"
 	"net/url"
 	"sync/atomic"
@@ -20,14 +20,25 @@ func (rr *RoundRobin) IncrementCount() {
 	rr.count.Add(1)
 }
 
-func (rr *RoundRobin) GetServer(servers []*models.Server) (url.URL, error) {
+func (rr *RoundRobin) GetServer(_ context.Context, servers []*models.Server) (url.URL, error) {
 	if len(servers) == 0 {
-		fmt.Println("there is no server in servers list")
-		return url.URL{}, errors.New("there is no server in servers list")
+		return url.URL{}, errors.New("no servers in list")
 	}
 
-	server := servers[rr.GetCount()%len(servers)]
-	rr.IncrementCount()
+	// Filter alive servers
+	var aliveServers []*models.Server
+	for _, server := range servers {
+		if server.IsAlive {
+			aliveServers = append(aliveServers, server)
+		}
+	}
 
-	return server.ServerUrl, nil
+	if len(aliveServers) == 0 {
+		return url.URL{}, errors.New("no alive servers available")
+	}
+
+	index := rr.GetCount()
+	selected := aliveServers[index%len(aliveServers)]
+
+	return selected.ServerUrl, nil
 }

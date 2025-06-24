@@ -1,33 +1,53 @@
 package algo
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"github.com/garv2003/go-load-balancer/internals/models"
 	"net/url"
 	"sync/atomic"
+	"time"
 )
 
 type WeightedResponseTime struct {
 	count atomic.Int64
 }
 
-func (rr *WeightedResponseTime) GetCount() int {
-	return int(rr.count.Load())
+func (wrt *WeightedResponseTime) UpdateServerAvgTime(servers []*models.Server, serverUrl url.URL, t time.Duration) {
+	for _, s := range servers {
+		if s.ServerUrl == serverUrl {
+			alpha := 0.7
+			newTime := t.Seconds()
+			s.AvgTime = alpha*s.AvgTime + (1-alpha)*newTime
+			break
+		}
+	}
 }
 
-func (rr *WeightedResponseTime) IncrementCount() {
-	rr.count.Add(1)
-}
-
-func (rr *WeightedResponseTime) GetServer(servers []*models.Server) (url.URL, error) {
+func (wrt *WeightedResponseTime) GetServer(_ context.Context, servers []*models.Server) (url.URL, error) {
 	if len(servers) == 0 {
-		fmt.Println("there is no server in servers list")
-		return url.URL{}, errors.New("there is no server in servers list")
+		return url.URL{}, errors.New("no servers in server list")
 	}
 
-	server := servers[rr.GetCount()%len(servers)]
-	rr.IncrementCount()
+	var selected *models.Server
+	minScore := float64(-1)
 
-	return server.ServerUrl, nil
+	for _, s := range servers {
+		if !s.IsAlive || s.Weight <= 0 {
+			continue
+		}
+
+		score := s.AvgTime / s.Weight
+
+		if selected == nil || score < minScore {
+			selected = s
+			minScore = score
+		}
+	}
+
+	if selected == nil {
+		return url.URL{}, errors.New("no alive servers with positive weight")
+	}
+
+	return selected.ServerUrl, nil
 }

@@ -1,33 +1,40 @@
 package algo
 
 import (
+	"context"
 	"errors"
-	"fmt"
-	"github.com/garv2003/go-load-balancer/internals/models"
+	"hash/fnv"
 	"net/url"
-	"sync/atomic"
+
+	"github.com/garv2003/go-load-balancer/internals/models"
 )
 
-type IpHash struct {
-	count atomic.Int64
+type IpHash struct{}
+
+func hashIP(ip string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(ip))
+	return h.Sum32()
 }
 
-func (rr *IpHash) GetCount() int {
-	return int(rr.count.Load())
-}
-
-func (rr *IpHash) IncrementCount() {
-	rr.count.Add(1)
-}
-
-func (rr *IpHash) GetServer(servers []*models.Server) (url.URL, error) {
-	if len(servers) == 0 {
-		fmt.Println("there is no server in servers list")
-		return url.URL{}, errors.New("there is no server in servers list")
+func (ip *IpHash) GetServer(ctx context.Context, servers []*models.Server) (url.URL, error) {
+	clientIPRaw := ctx.Value("client-ip")
+	clientIP, ok := clientIPRaw.(string)
+	if !ok || clientIP == "" {
+		return url.URL{}, errors.New("client IP not found in context")
 	}
 
-	server := servers[rr.GetCount()%len(servers)]
-	rr.IncrementCount()
+	var aliveServers []*models.Server
+	for _, s := range servers {
+		if s.IsAlive {
+			aliveServers = append(aliveServers, s)
+		}
+	}
+	
+	if len(aliveServers) == 0 {
+		return url.URL{}, errors.New("no alive servers")
+	}
 
-	return server.ServerUrl, nil
+	index := int(hashIP(clientIP)) % len(aliveServers)
+	return aliveServers[index].ServerUrl, nil
 }
